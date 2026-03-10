@@ -36,7 +36,8 @@ def load_detectron2_model():
     cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
     cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Set Detection Threshold
-    cfg.MODEL.DEVICE = "cpu"  # Specify Device GPU（or "cpu"）
+    # cfg.MODEL.DEVICE = "cpu"  # Specify Device GPU（or "cpu"）
+    cfg.MODEL.DEVICE = "cuda"
     return DefaultPredictor(cfg)
 
 def object_detection_with_detectron2(predictor, frame):
@@ -138,15 +139,43 @@ def process_rgb_video(filename, width, height):
             prev_frame_bgr = cv2.cvtColor(prev_frame, cv2.COLOR_RGB2BGR)
 
             flow = compute_optical_flow(prev_frame_bgr, frame_bgr)
+
+            mag, ang = cv2.cartToPolar(flow[...,0], flow[...,1])
+
+            flow_vis = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+            flow_vis = flow_vis.astype(np.uint8)
+            flow_vis = cv2.applyColorMap(flow_vis, cv2.COLORMAP_JET)
+
             masks, classes = object_detection_with_detectron2(predictor, frame_bgr)
+            detectron_vis = frame_bgr.copy()
+
+            for mask in masks:
+                detectron_vis[mask] = [0, 255, 0]  # green overlay
 
             is_moving, global_motion_vector = is_camera_moving(flow)
             foreground_mask = filter_foreground_with_optical_flow(flow, masks, is_moving, global_motion_vector)
 
             visual_frame = highlight_microblocks(frame_bgr, foreground_mask)
 
-            cv2.imshow("Original Frame", frame_bgr)
-            cv2.imshow("Segmented Frame", visual_frame)
+            cv2.putText(frame_bgr, "Original Frame", (20,40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+
+            cv2.putText(detectron_vis, "Detectron Segmentation", (20,40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+
+            cv2.putText(flow_vis, "Optical Flow", (20,40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+
+            cv2.putText(visual_frame, "Final Foreground Blocks", (20,40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+
+            top = np.hstack((frame_bgr, detectron_vis))
+            bottom = np.hstack((flow_vis, visual_frame))
+            combined = np.vstack((top, bottom))
+
+            # combined = cv2.resize(combined, (1280, 720))
+
+            cv2.imshow("Segmentation Pipeline Demo", combined)
 
             if cv2.waitKey(30) & 0xFF == ord('q'):
                 break
@@ -174,6 +203,6 @@ def classify_macroblocks(foreground_mask, block_size=16):
     
     return background, foreground
 
-filename = "1.rgb"  
+filename = "3.rgb"  
 width, height = 960, 540 
 process_rgb_video(filename, width, height)
